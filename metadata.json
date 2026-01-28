@@ -1,0 +1,5 @@
+{
+  "name": "NoteQuiz AI",
+  "description": "Trình tạo câu hỏi trắc nghiệm thông minh lấy cảm hứng từ NotebookLM. Tải lên nội dung văn bản để tạo các câu hỏi trắc nghiệm bám sát ngữ cảnh và xuất ra file Word.",
+  "requestFramePermissions": []
+}
