@@ -28,7 +28,9 @@ export default defineConfig(({ mode }) => {
       },
       build: {
         outDir: 'dist',
-        sourcemap: false
+        sourcemap: false,
+        // QUAN TRỌNG: Thêm dòng target này để sửa lỗi build với thư viện PDF
+        target: 'esnext' 
       }
     };
 });
