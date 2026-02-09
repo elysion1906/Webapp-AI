@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Question, QuizConfig } from "../types";
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export const generateQuizFromText = async (
   textContext: string,
