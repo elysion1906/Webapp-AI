@@ -1,4 +1,4 @@
-import * as pdfjsLibProxy from 'pdfjs-dist/build/pdf.mjs';
+import * as pdfjsLibProxy from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
