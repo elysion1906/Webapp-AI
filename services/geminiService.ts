@@ -73,9 +73,9 @@ export const generateQuizFromText = async (
 
   try {
     const ai = getAiClient();
-    // Sử dụng gemini-2.0-flash để ổn định và tốc độ tốt hơn
+    // Chuyển sang model gemini-1.5-flash để ổn định hơn về quota so với bản 2.0 preview
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash", 
+      model: "gemini-1.5-flash", 
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -115,6 +115,12 @@ export const generateQuizFromText = async (
 
   } catch (error: any) {
     console.error("Gemini Error:", error);
+    
+    // Xử lý lỗi Quota cụ thể (429)
+    if (error.message?.includes("429") || error.message?.includes("quota") || error.status === 429) {
+         throw new Error("Hệ thống đang quá tải (hết lượt dùng miễn phí). Vui lòng đợi khoảng 30s - 1 phút rồi thử lại.");
+    }
+
     // Ném lỗi chi tiết để hiển thị lên UI
     throw new Error(error.message || "Lỗi kết nối Gemini AI. Kiểm tra API Key và quota.");
   }
