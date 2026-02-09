@@ -1,8 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question, QuizConfig } from "../types";
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Lấy API Key từ biến môi trường (được Vite replace lúc build)
+const apiKey = process.env.GEMINI_API_KEY;
+
+const getAiClient = () => {
+  if (!apiKey) {
+    throw new Error("Thiếu API Key. Vui lòng cấu hình GEMINI_API_KEY trong Settings của Vercel.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 export const generateQuizFromText = async (
   textContext: string,
@@ -21,7 +28,6 @@ export const generateQuizFromText = async (
   };
   const vietnameseDifficulty = difficultyMap[config.difficulty] || 'Trung bình';
 
-  // Construct the negative constraint
   let avoidInstruction = "";
   
   const historyQuestions = previousQuestions.length > 0 
@@ -66,8 +72,10 @@ export const generateQuizFromText = async (
   `;
 
   try {
+    const ai = getAiClient();
+    // Sử dụng gemini-2.0-flash để ổn định và tốc độ tốt hơn
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview", 
+      model: "gemini-2.0-flash", 
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -92,10 +100,10 @@ export const generateQuizFromText = async (
     });
 
     const jsonText = response.text;
-    if (!jsonText) throw new Error("Không nhận được phản hồi.");
+    if (!jsonText) throw new Error("AI không trả về dữ liệu.");
 
     const rawQuestions = JSON.parse(jsonText);
-    if (!Array.isArray(rawQuestions)) throw new Error("Dữ liệu không đúng định dạng.");
+    if (!Array.isArray(rawQuestions)) throw new Error("Dữ liệu JSON từ AI bị lỗi định dạng.");
 
     return rawQuestions.map((q: any, index: number) => ({
       id: `q-${Date.now()}-${index}`,
@@ -105,8 +113,9 @@ export const generateQuizFromText = async (
       explanation: q.explanation,
     }));
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Error:", error);
-    throw new Error("Lỗi khi tạo câu hỏi. Vui lòng thử lại.");
+    // Ném lỗi chi tiết để hiển thị lên UI
+    throw new Error(error.message || "Lỗi kết nối Gemini AI. Kiểm tra API Key và quota.");
   }
 };
