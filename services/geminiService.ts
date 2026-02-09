@@ -6,10 +6,11 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateQuizFromText = async (
   textContext: string,
-  config: QuizConfig
+  config: QuizConfig,
+  previousQuestions: string[] = []
 ): Promise<Question[]> => {
   if (!textContext || textContext.trim().length === 0) {
-    throw new Error("Không có nội dung văn bản được cung cấp.");
+    throw new Error("Không có nội dung văn bản hoặc đường dẫn nào được cung cấp.");
   }
 
   // Map difficulty to Vietnamese for the prompt
@@ -20,43 +21,69 @@ export const generateQuizFromText = async (
   };
   const vietnameseDifficulty = difficultyMap[config.difficulty] || 'Trung bình';
 
-  const prompt = `
-    Bạn là một người soạn đề thi trắc nghiệm nghiêm khắc. Nhiệm vụ của bạn là tạo ra ${config.numberOfQuestions} câu hỏi trắc nghiệm dựa CHỈ trên văn bản được cung cấp dưới đây.
+  // Construct the negative constraint
+  let avoidInstruction = "";
+  
+  const historyQuestions = previousQuestions.length > 0 
+    ? `DANH SÁCH CÂU HỎI ĐÃ TẠO TRONG PHIÊN NÀY:\n${previousQuestions.map((q, i) => `${i+1}. ${q}`).join('\n')}` 
+    : "";
 
-    Độ khó: ${vietnameseDifficulty}.
+  const fileExclusion = config.excludedContent 
+    ? `NỘI DUNG CÂU HỎI CŨ CẦN TRÁNH (TỪ FILE BẠN TẢI LÊN):\n"""\n${config.excludedContent}\n"""` 
+    : "";
 
-    Quy tắc:
-    1. KHÔNG sử dụng kiến thức bên ngoài. Câu trả lời phải tìm thấy trực tiếp trong văn bản.
-    2. Nếu văn bản quá ngắn để tạo đủ ${config.numberOfQuestions} câu hỏi, hãy tạo nhiều nhất có thể (tối thiểu 1 câu).
-    3. Mỗi câu hỏi phải có chính xác 4 lựa chọn.
-    4. Cung cấp giải thích ngắn gọn tại sao đáp án đó đúng dựa trên văn bản.
-    5. Ngôn ngữ đầu ra: Tiếng Việt.
+  if (config.preventDuplicates && (historyQuestions || fileExclusion)) {
+    avoidInstruction = `
+    QUAN TRỌNG: Bạn KHÔNG ĐƯỢC phép tạo lại các câu hỏi trùng lặp hoặc có nội dung tương tự với các dữ liệu sau đây. Hãy tìm những ý tưởng mới từ tài liệu nguồn.
     
-    Văn bản đầu vào:
+    ${historyQuestions}
+    ${fileExclusion}
+    `;
+  }
+
+  const prompt = `
+    Bạn là một chuyên gia soạn đề thi trắc nghiệm chuyên nghiệp. Nhiệm vụ của bạn là tạo ra đúng ${config.numberOfQuestions} câu hỏi trắc nghiệm dựa trên nội dung được cung cấp.
+    
+    Nội dung đầu vào:
+    1. Văn bản trích xuất từ file hoặc nhập tay.
+    2. Các đường dẫn (URL) - hãy sử dụng Search để truy cập nội dung.
+
+    Yêu cầu về độ khó: ${vietnameseDifficulty}.
+
+    ${avoidInstruction}
+
+    Quy tắc bắt buộc:
+    1. Câu hỏi và đáp án phải bám sát nội dung nguồn.
+    2. Mỗi câu hỏi có đúng 4 lựa chọn (A, B, C, D).
+    3. Cung cấp giải thích chi tiết tại sao đáp án đó đúng.
+    4. Ngôn ngữ: Tiếng Việt.
+    5. Định dạng đầu ra: JSON.
+    
+    NỘI DUNG NGUỒN ĐỂ SOẠN ĐỀ:
     """
-    ${textContext.slice(0, 30000)} 
+    ${textContext.slice(0, 50000)} 
     """
-    (Lưu ý: Văn bản được cắt bớt 30k ký tự đầu để an toàn, mặc dù mô hình có thể xử lý nhiều hơn)
   `;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview", // Efficient model for large context processing
+      model: "gemini-3-flash-preview", 
       contents: prompt,
       config: {
+        tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: {
             type: Type.OBJECT,
             properties: {
-              questionText: { type: Type.STRING, description: "Nội dung câu hỏi bằng tiếng Việt" },
+              questionText: { type: Type.STRING, description: "Nội dung câu hỏi" },
               options: {
                 type: Type.ARRAY,
-                items: { type: Type.STRING, description: "Các lựa chọn trả lời bằng tiếng Việt" },
+                items: { type: Type.STRING },
               },
-              correctAnswerIndex: { type: Type.INTEGER, description: "Chỉ số của đáp án đúng (0-3)" },
-              explanation: { type: Type.STRING, description: "Giải thích bằng tiếng Việt" },
+              correctAnswerIndex: { type: Type.INTEGER, description: "Index của đáp án đúng" },
+              explanation: { type: Type.STRING, description: "Giải thích chi tiết" },
             },
             required: ["questionText", "options", "correctAnswerIndex", "explanation"],
           },
@@ -65,13 +92,11 @@ export const generateQuizFromText = async (
     });
 
     const jsonText = response.text;
-    if (!jsonText) {
-      throw new Error("Không nhận được phản hồi từ Gemini.");
-    }
+    if (!jsonText) throw new Error("Không nhận được phản hồi.");
 
     const rawQuestions = JSON.parse(jsonText);
+    if (!Array.isArray(rawQuestions)) throw new Error("Dữ liệu không đúng định dạng.");
 
-    // Map to our internal type and add IDs
     return rawQuestions.map((q: any, index: number) => ({
       id: `q-${Date.now()}-${index}`,
       questionText: q.questionText,
@@ -81,7 +106,7 @@ export const generateQuizFromText = async (
     }));
 
   } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw new Error("Không thể tạo câu hỏi. Vui lòng đảm bảo nội dung đầu vào đầy đủ và thử lại.");
+    console.error("Gemini Error:", error);
+    throw new Error("Lỗi khi tạo câu hỏi. Vui lòng thử lại.");
   }
 };

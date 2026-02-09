@@ -1,6 +1,7 @@
 import * as pdfjsLibProxy from 'pdfjs-dist/build/pdf.mjs';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 
 // Handle potentially different export structures (ESM vs CJS wrapper)
 // esm.sh often wraps the library in a default export
@@ -66,6 +67,51 @@ const parseExcel = async (file: File): Promise<string> => {
 };
 
 /**
+ * Extracts text from a PowerPoint (PPTX) file using JSZip
+ */
+const parsePptx = async (file: File): Promise<string> => {
+  const zip = await JSZip.loadAsync(file);
+  const slideFiles: { name: string; content: string }[] = [];
+  
+  // Find all slide XML files
+  const fileNames = Object.keys(zip.files);
+  for (const fileName of fileNames) {
+    if (fileName.match(/ppt\/slides\/slide\d+\.xml/)) {
+      const content = await zip.files[fileName].async('text');
+      slideFiles.push({ name: fileName, content });
+    }
+  }
+
+  // Sort slides by number (slide1, slide2, etc.) to maintain order
+  slideFiles.sort((a, b) => {
+    const numA = parseInt(a.name.match(/slide(\d+)\.xml/)![1] || "0");
+    const numB = parseInt(b.name.match(/slide(\d+)\.xml/)![1] || "0");
+    return numA - numB;
+  });
+
+  let fullText = "";
+  const parser = new DOMParser();
+
+  // Parse XML content for each slide
+  slideFiles.forEach((slide, index) => {
+    const xmlDoc = parser.parseFromString(slide.content, "text/xml");
+    // Text in PPTX OpenXML is typically found in <a:t> tags
+    const textNodes = xmlDoc.getElementsByTagName("a:t");
+    
+    let slideText = "";
+    for (let i = 0; i < textNodes.length; i++) {
+      slideText += textNodes[i].textContent + " ";
+    }
+    
+    if (slideText.trim()) {
+      fullText += `--- Slide ${index + 1} ---\n${slideText.trim()}\n\n`;
+    }
+  });
+
+  return fullText;
+};
+
+/**
  * Main parser function router
  */
 export const extractTextFromFile = async (file: File): Promise<string> => {
@@ -82,6 +128,9 @@ export const extractTextFromFile = async (file: File): Promise<string> => {
     else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
       return await parseExcel(file);
     } 
+    else if (fileName.endsWith('.pptx')) {
+      return await parsePptx(file);
+    }
     else if (fileType === 'text/plain' || fileName.endsWith('.txt') || fileName.endsWith('.md')) {
       return await file.text();
     } 
