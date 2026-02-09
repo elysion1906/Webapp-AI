@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question, QuizConfig } from "../types";
 
-// Lấy API Key từ biến môi trường (được Vite replace lúc build)
+// Lấy API Key từ biến môi trường
 const apiKey = process.env.GEMINI_API_KEY;
 
 const getAiClient = () => {
@@ -20,7 +20,7 @@ export const generateQuizFromText = async (
     throw new Error("Không có nội dung văn bản hoặc đường dẫn nào được cung cấp.");
   }
 
-  // Map difficulty to Vietnamese for the prompt
+  // Map độ khó
   const difficultyMap: Record<string, string> = {
     'Easy': 'Dễ',
     'Medium': 'Trung bình',
@@ -71,11 +71,10 @@ export const generateQuizFromText = async (
     """
   `;
 
-  try {
+  const generateWithModel = async (modelId: string) => {
     const ai = getAiClient();
-    // Chuyển sang model gemini-1.5-flash để ổn định hơn về quota so với bản 2.0 preview
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash", 
+    return await ai.models.generateContent({
+      model: modelId, 
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -98,6 +97,26 @@ export const generateQuizFromText = async (
         },
       },
     });
+  };
+
+  try {
+    let response;
+    
+    try {
+        // Ưu tiên dùng phiên bản ổn định cụ thể 001
+        // gemini-1.5-flash-001 thường ổn định hơn alias generic "gemini-1.5-flash"
+        response = await generateWithModel("gemini-1.5-flash-001");
+    } catch (err: any) {
+        // Nếu lỗi 404 (Không tìm thấy model 1.5), thử fallback về 2.0-flash-exp (có thể 429 nhưng ít nhất nó tồn tại)
+        // Hoặc thử gemini-1.5-pro-001
+        console.warn("Lỗi với gemini-1.5-flash-001, đang thử fallback model...", err.message);
+        
+        if (err.message?.includes("404") || err.message?.includes("not found")) {
+             response = await generateWithModel("gemini-1.5-pro-001");
+        } else {
+            throw err; // Nếu lỗi khác (như quota) thì ném ra luôn
+        }
+    }
 
     const jsonText = response.text;
     if (!jsonText) throw new Error("AI không trả về dữ liệu.");
@@ -116,12 +135,15 @@ export const generateQuizFromText = async (
   } catch (error: any) {
     console.error("Gemini Error:", error);
     
-    // Xử lý lỗi Quota cụ thể (429)
-    if (error.message?.includes("429") || error.message?.includes("quota") || error.status === 429) {
-         throw new Error("Hệ thống đang quá tải (hết lượt dùng miễn phí). Vui lòng đợi khoảng 30s - 1 phút rồi thử lại.");
+    // Xử lý lỗi Quota (429)
+    if (error.message?.includes("429") || error.status === 429) {
+         throw new Error("Hệ thống đang quá tải (hết lượt miễn phí của Google). Vui lòng thử lại sau 1-2 phút.");
+    }
+    // Xử lý lỗi Model not found (404)
+    if (error.message?.includes("404") || error.status === 404) {
+         throw new Error("Model AI hiện tại không khả dụng (404). Vui lòng kiểm tra lại cấu hình hoặc thử lại sau.");
     }
 
-    // Ném lỗi chi tiết để hiển thị lên UI
-    throw new Error(error.message || "Lỗi kết nối Gemini AI. Kiểm tra API Key và quota.");
+    throw new Error(error.message || "Lỗi kết nối Gemini AI.");
   }
 };
