@@ -71,6 +71,7 @@ export const generateQuizFromText = async (
     """
   `;
 
+  // Hàm helper để gọi model cụ thể
   const generateWithModel = async (modelId: string) => {
     const ai = getAiClient();
     return await ai.models.generateContent({
@@ -89,7 +90,7 @@ export const generateQuizFromText = async (
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
               },
-              correctAnswerIndex: { type: Type.INTEGER, description: "Index của đáp án đúng" },
+              correctAnswerIndex: { type: Type.INTEGER, description: "Index của đáp án đúng (0-3)" },
               explanation: { type: Type.STRING, description: "Giải thích chi tiết" },
             },
             required: ["questionText", "options", "correctAnswerIndex", "explanation"],
@@ -103,18 +104,19 @@ export const generateQuizFromText = async (
     let response;
     
     try {
-        // Ưu tiên dùng phiên bản ổn định cụ thể 001
-        // gemini-1.5-flash-001 thường ổn định hơn alias generic "gemini-1.5-flash"
+        // CHIẾN LƯỢC:
+        // 1. Thử dùng gemini-1.5-flash-001 (Bản ổn định, rẻ, nhanh)
         response = await generateWithModel("gemini-1.5-flash-001");
     } catch (err: any) {
-        // Nếu lỗi 404 (Không tìm thấy model 1.5), thử fallback về 2.0-flash-exp (có thể 429 nhưng ít nhất nó tồn tại)
-        // Hoặc thử gemini-1.5-pro-001
-        console.warn("Lỗi với gemini-1.5-flash-001, đang thử fallback model...", err.message);
+        // 2. Nếu thất bại (ví dụ 404 Not Found), thử fallback sang gemini-1.5-pro-001
+        console.warn(`Lỗi với gemini-1.5-flash-001 (${err.message}), đang thử model dự phòng...`);
         
-        if (err.message?.includes("404") || err.message?.includes("not found")) {
+        // Chỉ thử lại nếu lỗi là do không tìm thấy model hoặc lỗi server,
+        // Nếu lỗi 429 (hết quota) thì thường các model khác cũng bị, nhưng cứ thử Pro cho chắc.
+        if (err.message?.includes("404") || err.message?.includes("not found") || err.status === 503) {
              response = await generateWithModel("gemini-1.5-pro-001");
         } else {
-            throw err; // Nếu lỗi khác (như quota) thì ném ra luôn
+            throw err; // Ném lỗi luôn nếu là lỗi khác (ví dụ sai API Key)
         }
     }
 
@@ -135,13 +137,15 @@ export const generateQuizFromText = async (
   } catch (error: any) {
     console.error("Gemini Error:", error);
     
-    // Xử lý lỗi Quota (429)
+    // Xử lý thông báo lỗi thân thiện với người dùng
     if (error.message?.includes("429") || error.status === 429) {
-         throw new Error("Hệ thống đang quá tải (hết lượt miễn phí của Google). Vui lòng thử lại sau 1-2 phút.");
+         throw new Error("Hệ thống đang quá tải (Google Free Tier Quota). Vui lòng đợi 1-2 phút rồi thử lại.");
     }
-    // Xử lý lỗi Model not found (404)
     if (error.message?.includes("404") || error.status === 404) {
-         throw new Error("Model AI hiện tại không khả dụng (404). Vui lòng kiểm tra lại cấu hình hoặc thử lại sau.");
+         throw new Error("Không kết nối được với Model AI (404). Vui lòng thử lại sau.");
+    }
+    if (error.message?.includes("API Key")) {
+        throw new Error("Chưa cấu hình API Key chính xác.");
     }
 
     throw new Error(error.message || "Lỗi kết nối Gemini AI.");
